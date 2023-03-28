@@ -1,0 +1,30 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "C:\\npcap-sdk\\Include"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceRoot}",
+                    "C:\\npcap-sdk\\Lib"
+                ]
+            },
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "compilerPath": "C:\\Program Files\\mingw64\\bin\\gcc.exe",
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "windows-gcc-x64",
+            "compilerArgs": [
+                "-DDEBUG_VSCODE"
+            ]
+        }
+    ],
+    "version": 4
+}
