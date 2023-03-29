@@ -1,9 +1,0 @@
-{
-    "files.associations": {
-        "*.txt": "paradox",
-        "fstream": "cpp",
-        "pcap.h": "c",
-        "packet32.h": "c",
-        "ntddndis.h": "c"
-    }
-}
