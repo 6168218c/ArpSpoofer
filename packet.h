@@ -67,7 +67,7 @@ typedef struct
 typedef struct
 {
     ether_header header;
-    BYTE payload[0];
+    uint8_t payload[0];
 } EthernetPacket;
 
 typedef struct
@@ -80,7 +80,7 @@ typedef struct
 {
     ether_header ether;
     ipv4_header ipv4;
-    BYTE payload[0];
+    uint8_t payload[0];
 } Ipv4Packet;
 
 typedef struct
@@ -88,6 +88,14 @@ typedef struct
     ether_header ether;
     ipv4_header ipv4;
     tcp_header tcp;
-    BYTE payload[0];
+    uint8_t payload[0];
 } TcpPacket;
+
+// Utility functions
+uint16_t Checksum(uint16_t *packet, int packlen);
+uint16_t TcpPacketLen(TcpPacket *tcpPacket);
+uint16_t TcpChecksum(TcpPacket *tcpPacket);
+void SetupArpPacket(ArpPacket *packet, uint8_t *sourceMac, uint8_t *destMac,
+                    uint32_t sourceIp, uint32_t destIp, uint16_t opcode);
+
 #endif

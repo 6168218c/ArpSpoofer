@@ -5,11 +5,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gdb) 启动",
+            "name": "(gdb) Launch Main Program",
             "type": "cppdbg",
             "request": "launch",
             "preLaunchTask": "C/C++: gcc.exe Debug",
-            "program": "${fileDirname}/${fileBasenameNoExtension}.exe",
+            "program": "${workspaceFolder}/program.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
