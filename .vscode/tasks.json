@@ -1,14 +1,27 @@
 {
     "tasks": [
         {
+            "type": "shell",
+            "label": "Build Debug",
+            "command": "echo Build Complete.",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "dependsOn": [
+                "C/C++: gcc.exe ArpSpoofer Debug",
+                "C/C++: gcc.exe FakeSSLServer Debug"
+            ]
+        },
+        {
             "type": "cppbuild",
-            "label": "C/C++: gcc.exe Debug",
+            "label": "C/C++: gcc.exe ArpSpoofer Debug",
             "command": "C:\\Program Files\\mingw64\\bin\\gcc.exe",
             "args": [
                 "-fdiagnostics-color=always",
                 "-g",
                 "-D_DEBUG",
-                "${workspaceFolder}/*.c",
+                "${workspaceFolder}/src/arpspoofer/*.c",
                 "-I",
                 "C:\\npcap-sdk\\Include",
                 "-L",
@@ -17,37 +30,60 @@
                 "-lwsock32",
                 "-liphlpapi",
                 "-o",
-                "${workspaceFolder}/program.exe"
+                "${workspaceFolder}/bin/arpspoofer.exe"
             ],
             "options": {
                 "cwd": "${fileDirname}"
             },
             "problemMatcher": [
                 "$gcc"
-            ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "detail": "调试器生成的任务。"
+            ]
         },
         {
             "type": "cppbuild",
-            "label": "C/C++: gcc.exe Release",
+            "label": "C/C++: gcc.exe FakeSSLServer Debug",
             "command": "C:\\Program Files\\mingw64\\bin\\gcc.exe",
             "args": [
                 "-fdiagnostics-color=always",
-                "${file}",
+                "-g",
+                "-D_DEBUG",
+                "${workspaceFolder}/src/fakesslserver/*.c",
+                "-I",
+                "C:\\openssl\\include",
+                "-L",
+                "C:\\openssl\\lib",
+                "-llibssl",
+                "-llibcrypto",
+                "-lwsock32",
+                "-o",
+                "${workspaceFolder}/bin/fakesslserver.exe"
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "type": "cppbuild",
+            "label": "C/C++: gcc.exe ArpSpoofer Release",
+            "command": "C:\\Program Files\\mingw64\\bin\\gcc.exe",
+            "args": [
+                "-fdiagnostics-color=always",
+                "${workspaceFolder}/src/arpspoofer/*.c",
                 "-I",
                 "C:\\npcap-sdk\\Include",
+                "C:\\openssl\\include",
                 "-L",
                 "C:\\npcap-sdk\\Lib\\x64",
+                "C:\\openssl\\lib",
                 "-lwpcap",
                 "-lwsock32",
                 "-liphlpapi",
                 "-O2",
                 "-o",
-                "${fileDirname}\\${fileBasenameNoExtension}.exe"
+                "${workspaceFolder}/bin/arpspoofer.exe"
             ],
             "options": {
                 "cwd": "${fileDirname}"

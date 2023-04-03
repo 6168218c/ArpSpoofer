@@ -92,9 +92,9 @@ typedef struct
 } TcpPacket;
 
 // Utility functions
-uint16_t Checksum(uint16_t *packet, int packlen);
 uint16_t TcpPacketLen(TcpPacket *tcpPacket);
 uint16_t TcpChecksum(TcpPacket *tcpPacket);
+uint16_t Ipv4Checksum(Ipv4Packet *ipv4Packet);
 void SetupArpPacket(ArpPacket *packet, uint8_t *sourceMac, uint8_t *destMac,
                     uint32_t sourceIp, uint32_t destIp, uint16_t opcode);
 

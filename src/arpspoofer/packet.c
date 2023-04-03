@@ -2,14 +2,15 @@
 #include "pcap.h"
 
 // Packet Utilities
-uint16_t Checksum(uint16_t *packet, int packlen)
+uint16_t Checksum(uint16_t *packet, int packlen, uint16_t *checksumIgnore)
 {
     register unsigned long sum = 0;
 
-    while (packlen > 1)
+    for (; packlen > 1; ++packet, packlen -= 2)
     {
-        sum += *(packet++);
-        packlen -= 2;
+        if (packet == checksumIgnore)
+            continue;
+        sum += *packet;
     }
 
     if (packlen > 0)
@@ -40,8 +41,14 @@ uint16_t TcpChecksum(TcpPacket *tcpPacket)
     buf[11] = (uint16_t)(len & 0x00FF);
     memcpy(buf + 12, &tcpPacket->tcp, len);
     ((tcp_header *)(buf + 12))->checksum = 0;
-    uint16_t checksum = Checksum((uint16_t *)buf, 12 + len);
+    uint16_t checksum = Checksum((uint16_t *)buf, 12 + len, NULL);
     free(buf);
+    return checksum;
+}
+uint16_t Ipv4Checksum(Ipv4Packet *ipv4Packet)
+{
+    uint16_t checksum = Checksum((uint16_t *)(&ipv4Packet->ipv4), sizeof(ipv4_header),
+                                 (uint16_t *)(&ipv4Packet->ipv4.checksum));
     return checksum;
 }
 

@@ -3,7 +3,8 @@
 #include <stdbool.h>
 extern const char *DEVICE_NAME;
 extern unsigned long ipAddr, gateAddr;
-extern unsigned char localMacAddr[6], gateMacAddr[6];
+#define MACADDR_LEN 6
+extern unsigned char localMacAddr[MACADDR_LEN], gateMacAddr[MACADDR_LEN];
 
 extern bool exitFlag;
 

