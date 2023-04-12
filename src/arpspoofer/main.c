@@ -38,6 +38,7 @@ void enable_auto_spoof(BOOL value) { enableAutoSpoof = value; }
 void ethernet_protocol_callback(unsigned char *argument, const struct pcap_pkthdr *packet_heaher, const unsigned char *packet_content);
 
 pcap_t *mainDevice;
+pcap_t *loopbackDevice;
 int main(int argc, char **argv)
 {
     char errbuf[PCAP_BUF_SIZE];
@@ -49,6 +50,27 @@ int main(int argc, char **argv)
     }
 
     init_addrs();
+
+    pcap_if_t *allDevs;
+    if (pcap_findalldevs(&allDevs, errbuf))
+    {
+        LOG("Failed:%s\n", errbuf)
+        exit(1);
+    }
+    for (pcap_if_t *dev = allDevs; dev; dev = dev->next)
+    {
+        if (strstr(dev->description, "loopback"))
+        {
+            loopbackDevice = pcap_open(dev->name, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+            if (loopbackDevice == NULL)
+            {
+                LOG("Failed:%s\n", errbuf)
+                exit(1);
+            }
+            break;
+        }
+    }
+    pcap_freealldevs(allDevs);
 
     mainDevice = pcap_open(DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
     if (mainDevice == NULL)
@@ -65,6 +87,7 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+    pcap_close(loopbackDevice);
     pcap_close(mainDevice);
 }
 
@@ -176,7 +199,7 @@ void ethernet_protocol_callback(unsigned char *argument, const struct pcap_pkthd
     if (!memcmp(ethPacket->header.ether_shost, localMacAddr, MACADDR_LEN)) // Packet sent by us
     {
         // ignore it
-        return;
+        // return;
     }
 
     uint32_t arp = ntohs(0x0806);
@@ -206,13 +229,24 @@ void ethernet_protocol_callback(unsigned char *argument, const struct pcap_pkthd
             {
                 pcap_dump(dumpDevice, packet_header, packet_content);
                 uint16_t len = ntohs(ipv4Packet->ipv4.len) - sizeof(ipv4Packet->ipv4) - (tcpPacket->tcp.data_off_set >> 4 << 2);
-                uint16_t checksum = TcpChecksum(tcpPacket);
-                uint16_t ipchecksum = Ipv4Checksum(ipv4Packet);
+                // uint16_t checksum = TcpChecksum(tcpPacket);
+                // uint16_t ipchecksum = Ipv4Checksum(ipv4Packet);
                 handleHttp(tcpPacket, len);
                 return;
             }
-            if (sourcePort == 443 || destPort == 443) // HTTPS
+            if (destPort == 443 && ipv4Packet->ipv4.src == ipAddr) // HTTPS
             {
+                pcap_dump(dumpDevice, packet_header, packet_content);
+                uint8_t *pkt = malloc(packet_header->len - 10);
+                memset(pkt, 0, packet_header->len - 10);
+                memcpy(pkt + 4, &tcpPacket->ipv4, packet_header->len - 14);
+                pkt[0] = 2; // set to ip
+                ipv4_header *modifiedPacket = (ipv4_header *)(pkt + 4);
+                modifiedPacket->dst = modifiedPacket->src = ntohl(INADDR_LOOPBACK);
+                tcp_header *modifiedTcp = (tcp_header *)(pkt + 4 + sizeof(ipv4_header));
+                modifiedTcp->dst_port = ntohs(27013); // fake server port
+                pcap_sendpacket(loopbackDevice, pkt, packet_header->len - 10);
+                free(pkt);
             }
         }
     }
