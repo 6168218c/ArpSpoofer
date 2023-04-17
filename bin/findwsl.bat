@@ -1,0 +1,1 @@
+wsl.exe -- ip route | findstr src > wslip.txt

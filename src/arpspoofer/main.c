@@ -38,7 +38,7 @@ void enable_auto_spoof(BOOL value) { enableAutoSpoof = value; }
 void ethernet_protocol_callback(unsigned char *argument, const struct pcap_pkthdr *packet_heaher, const unsigned char *packet_content);
 
 pcap_t *mainDevice;
-pcap_t *loopbackDevice;
+pcap_t *retransmitDevice;
 int main(int argc, char **argv)
 {
     char errbuf[PCAP_BUF_SIZE];
@@ -51,28 +51,14 @@ int main(int argc, char **argv)
 
     init_addrs();
 
-    pcap_if_t *allDevs;
-    if (pcap_findalldevs(&allDevs, errbuf))
+    retransmitDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    if (retransmitDevice == NULL)
     {
         LOG("Failed:%s\n", errbuf)
         exit(1);
     }
-    for (pcap_if_t *dev = allDevs; dev; dev = dev->next)
-    {
-        if (strstr(dev->description, "loopback"))
-        {
-            loopbackDevice = pcap_open(dev->name, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
-            if (loopbackDevice == NULL)
-            {
-                LOG("Failed:%s\n", errbuf)
-                exit(1);
-            }
-            break;
-        }
-    }
-    pcap_freealldevs(allDevs);
 
-    mainDevice = pcap_open(DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    mainDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
     if (mainDevice == NULL)
     {
         LOG("Failed:%s\n", errbuf)
@@ -87,12 +73,21 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    pcap_close(loopbackDevice);
+    pcap_close(retransmitDevice);
     pcap_close(mainDevice);
 }
 
 void init_addrs()
 {
+    FILE *wslIpFile = fopen("wslip.txt", "r");
+    char ipStr[1024];
+    memset(ipStr, 0, sizeof ipStr);
+    while (strcmp("src", ipStr) != 0)
+        fscanf(wslIpFile, "%s", ipStr);
+    fscanf(wslIpFile, "%s", ipStr);
+    ipWsl = inet_addr(ipStr);
+    fclose(wslIpFile);
+
     PIP_ADAPTER_INFO pAdapterInfo;
 
     ULONG ulOutBufLen = sizeof(IP_ADAPTER_INFO);
@@ -121,7 +116,7 @@ void init_addrs()
         PIP_ADAPTER_INFO pAdapter = pAdapterInfo;
         while (pAdapter)
         {
-            if (strstr(DEVICE_NAME, pAdapter->AdapterName) != NULL)
+            if (strstr(WLAN_DEVICE_NAME, pAdapter->AdapterName) != NULL)
             {
                 ipAddr = inet_addr(pAdapter->IpAddressList.IpAddress.String);
                 gateAddr = inet_addr(pAdapter->GatewayList.IpAddress.String);
@@ -140,7 +135,25 @@ void init_addrs()
                 LOG("Mac Addresses:\nLocal:%.2x%.2x%.2x%.2x%.2x%.2x\nGate:%.2x%.2x%.2x%.2x%.2x%.2x",
                     localMacAddr[0], localMacAddr[1], localMacAddr[2], localMacAddr[3], localMacAddr[4], localMacAddr[5],
                     gateMacAddr[0], gateMacAddr[1], gateMacAddr[2], gateMacAddr[3], gateMacAddr[4], gateMacAddr[5])
-                break;
+            }
+            else if (strstr(VETHER_DEVICE_NAME, pAdapter->AdapterName) != NULL)
+            {
+                ipWslHost = inet_addr(pAdapter->IpAddressList.IpAddress.String);
+                for (int i = 0; i < pAdapter->AddressLength; i++)
+                {
+                    wslHostAddr[i] = pAdapter->Address[i];
+                }
+                ULONG size = 6;
+                SendARP(ipWsl, ipWslHost, wslAddr, &size);
+
+                if (size != 6)
+                {
+                    LOG("Failed to obtain Mac Addresses!")
+                    exit(1);
+                }
+                LOG("vEthernet Mac Addresses:\nLocal:%.2x%.2x%.2x%.2x%.2x%.2x\nWSL:%.2x%.2x%.2x%.2x%.2x%.2x",
+                    wslHostAddr[0], wslHostAddr[1], wslHostAddr[2], wslHostAddr[3], wslHostAddr[4], wslHostAddr[5],
+                    wslAddr[0], wslAddr[1], wslAddr[2], wslAddr[3], wslAddr[4], wslAddr[5])
             }
             pAdapter = pAdapter->Next;
         }
@@ -176,6 +189,10 @@ void handleHttp(TcpPacket *tcpPacket, uint16_t len)
             free(newPacket);
         }
     }
+    else
+    {
+        pcap_sendpacket(mainDevice, (const uint8_t *)tcpPacket, sizeof(TcpPacket) + len);
+    }
     return;
 }
 
@@ -199,7 +216,7 @@ void ethernet_protocol_callback(unsigned char *argument, const struct pcap_pkthd
     if (!memcmp(ethPacket->header.ether_shost, localMacAddr, MACADDR_LEN)) // Packet sent by us
     {
         // ignore it
-        // return;
+        return;
     }
 
     uint32_t arp = ntohs(0x0806);
@@ -231,21 +248,21 @@ void ethernet_protocol_callback(unsigned char *argument, const struct pcap_pkthd
                 uint16_t len = ntohs(ipv4Packet->ipv4.len) - sizeof(ipv4Packet->ipv4) - (tcpPacket->tcp.data_off_set >> 4 << 2);
                 // uint16_t checksum = TcpChecksum(tcpPacket);
                 // uint16_t ipchecksum = Ipv4Checksum(ipv4Packet);
-                handleHttp(tcpPacket, len);
+                // handleHttp(tcpPacket, len);
                 return;
             }
-            if (destPort == 443 && ipv4Packet->ipv4.src == ipAddr) // HTTPS
+            if (destPort == 443) // HTTPS
             {
                 pcap_dump(dumpDevice, packet_header, packet_content);
-                uint8_t *pkt = malloc(packet_header->len - 10);
-                memset(pkt, 0, packet_header->len - 10);
-                memcpy(pkt + 4, &tcpPacket->ipv4, packet_header->len - 14);
-                pkt[0] = 2; // set to ip
-                ipv4_header *modifiedPacket = (ipv4_header *)(pkt + 4);
-                modifiedPacket->dst = modifiedPacket->src = ntohl(INADDR_LOOPBACK);
-                tcp_header *modifiedTcp = (tcp_header *)(pkt + 4 + sizeof(ipv4_header));
-                modifiedTcp->dst_port = ntohs(27013); // fake server port
-                pcap_sendpacket(loopbackDevice, pkt, packet_header->len - 10);
+                uint8_t *pkt = malloc(packet_header->len);
+                memcpy(pkt, packet_content, packet_header->len);
+                TcpPacket *modified = (TcpPacket *)pkt;
+                memcpy(modified->ether.ether_shost, wslHostAddr, MACADDR_LEN);
+                memcpy(modified->ether.ether_dhost, wslAddr, MACADDR_LEN);
+                modified->ipv4.dst = ipWsl;
+                modified->ipv4.checksum = Ipv4Checksum((Ipv4Packet *)modified);
+                modified->tcp.checksum = TcpChecksum(modified);
+                int res = pcap_sendpacket(retransmitDevice, pkt, packet_header->len);
                 free(pkt);
             }
         }
