@@ -28,6 +28,7 @@ static ULONG SpoofThreadProc(LPVOID lpParams)
     }
     free(arpPacket);
     pcap_close(subDevice);
+    pcap_close(wslDevice);
     free(params);
 }
 
@@ -48,7 +49,13 @@ void CreateSpoofThread(uint8_t *targetMac, uint32_t targetIp)
         LOG("Spoof thread on MAC %.2x%.2x%.2x%.2x%.2x%.2x started",
             targetMac[0], targetMac[1], targetMac[2], targetMac[3], targetMac[4], targetMac[5]);
         hThreads[threadsTop++] = handle;
-        memcpy(&spoofedMachines[spoofedTop], pParams, sizeof(MachineInfo));
+        memcpy(&spoofedMachines[spoofedTop].MacAddress, pParams->MacAddress, MACADDR_LEN);
+        spoofedMachines[spoofedTop].IpAddress = pParams->IpAddress;
         spoofedTop++;
     }
+}
+
+void ShutdownSpoofThreads()
+{
+    WaitForMultipleObjects(threadsTop, hThreads, TRUE, -1);
 }
