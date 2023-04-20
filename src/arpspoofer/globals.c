@@ -6,5 +6,3 @@ unsigned long ipAddr, gateAddr;
 unsigned long ipWslHost, ipWsl;
 unsigned char localMacAddr[6], gateMacAddr[6];
 unsigned char wslHostAddr[MACADDR_LEN], wslAddr[MACADDR_LEN];
-
-bool exitFlag = false;
