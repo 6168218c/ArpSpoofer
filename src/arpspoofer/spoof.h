@@ -3,7 +3,6 @@
 #include <pcap.h>
 #include <stdint.h>
 #include <stdbool.h>
-#pragma pack(1)
 // Global Datastructure
 typedef struct __tagPcapChannel
 {

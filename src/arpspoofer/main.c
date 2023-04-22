@@ -56,16 +56,16 @@ int main(int argc, char **argv)
 
     init_addrs();
 
-    // manual_setup_spoof(inet_addr("192.168.43.11"));
+    manual_setup_spoof(inet_addr("192.168.43.56"));
 
-    mainDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    mainDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS | PCAP_OPENFLAG_NOCAPTURE_LOCAL, 0, NULL, errbuf);
     if (mainDevice == NULL)
     {
         LOG("Failed:%s\n", errbuf)
         exit(1);
     }
 
-    // pcap_dumper_t *dumpDevice = pcap_dump_open(mainDevice, "dump.pcap");
+    dumpDevice = pcap_dump_open(mainDevice, "dump.pcap");
 
     LOG("Capture started");
     signal(SIGINT, on_sig_int);
@@ -120,6 +120,7 @@ void init_addrs()
             {
                 ipAddr = inet_addr(pAdapter->IpAddressList.IpAddress.String);
                 gateAddr = inet_addr(pAdapter->GatewayList.IpAddress.String);
+                wlanMask = inet_addr(pAdapter->IpAddressList.IpMask.String);
                 for (int i = 0; i < pAdapter->AddressLength; i++)
                 {
                     localMacAddr[i] = pAdapter->Address[i];
@@ -139,6 +140,7 @@ void init_addrs()
             else if (strstr(VETHER_DEVICE_NAME, pAdapter->AdapterName) != NULL)
             {
                 ipWslHost = inet_addr(pAdapter->IpAddressList.IpAddress.String);
+                wslMask = inet_addr(pAdapter->IpAddressList.IpMask.String);
                 for (int i = 0; i < pAdapter->AddressLength; i++)
                 {
                     wslHostAddr[i] = pAdapter->Address[i];
@@ -195,6 +197,10 @@ void discovery_packet_handler(u_char *argument, const struct pcap_pkthdr *packet
                 return;
             }
         }
+    }
+    if (memcmp(ethPacket->header.ether_shost, localMacAddr, MACADDR_LEN) == 0)
+    {
+        pcap_dump(dumpDevice, packet_heaher, packet_content);
     }
 }
 

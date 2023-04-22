@@ -4,9 +4,7 @@
 #ifndef SUNK_PACKET_H
 #define SUNK_PACKET_H
 #include "stdint.h"
-
 #pragma pack(1)
-
 typedef struct
 {
     unsigned char ether_dhost[6]; /* destination eth addr	*/
@@ -97,5 +95,5 @@ uint16_t TcpChecksum(TcpPacket *tcpPacket);
 uint16_t Ipv4Checksum(Ipv4Packet *ipv4Packet);
 void SetupArpPacket(ArpPacket *packet, uint8_t *sourceMac, uint8_t *destMac,
                     uint32_t sourceIp, uint32_t destIp, uint16_t opcode);
-
+#pragma pack()
 #endif

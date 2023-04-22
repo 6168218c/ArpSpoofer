@@ -14,8 +14,8 @@ static ULONG SpoofThreadProc(LPVOID lpParams)
 {
     SpoofSession *session = lpParams;
     char errbuf[PCAP_BUF_SIZE];
-    pcap_t *subDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
-    pcap_t *wslDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    pcap_t *subDevice = pcap_open(WLAN_DEVICE_NAME, 65536, 0, 0, NULL, errbuf);
+    pcap_t *wslDevice = pcap_open(VETHER_DEVICE_NAME, 65536, 0, 0, NULL, errbuf);
     ArpPacket pktMem;
     ArpPacket *arpPacket = &pktMem;
     while (!session->exitFlag)
@@ -24,7 +24,8 @@ static ULONG SpoofThreadProc(LPVOID lpParams)
                        session->machineInfo.IpAddress, 2);
         pcap_sendpacket(subDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
         SetupArpPacket(arpPacket, wslHostAddr, wslAddr, session->machineInfo.IpAddress, ipWsl, 2);
-        // pcap_sendpacket(wslDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
+        pcap_sendpacket(wslDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
+        Sleep(500);
     }
     pcap_close(subDevice);
     pcap_close(wslDevice);

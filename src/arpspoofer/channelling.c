@@ -2,24 +2,37 @@
 #include "packet.h"
 #include "globals.h"
 
-void forward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content);
-void backward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content);
+void forward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content);
+void backward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content);
 
 void create_forward_channel(SpoofSession *session)
 {
     char errbuf[PCAP_BUF_SIZE];
-    session->forwardChannel.vEtherDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    session->forwardChannel.vEtherDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS | PCAP_OPENFLAG_MAX_RESPONSIVENESS, 0, NULL, errbuf);
     if (session->forwardChannel.vEtherDevice == NULL)
     {
         LOG("Failed:%s\n", errbuf)
         exit(1);
     }
 
-    session->forwardChannel.wlanDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
+    char filter[100];
+    uint8_t *mac_addr = session->machineInfo.MacAddress;
+    memset(filter, 0, sizeof filter);
+    sprintf(filter, "ether src %.2x:%.2x:%.2x:%.2x:%.2x:%.2x", mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+    struct bpf_program fcode;
+    session->forwardChannel.wlanDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS | PCAP_OPENFLAG_NOCAPTURE_LOCAL | PCAP_OPENFLAG_MAX_RESPONSIVENESS, 0, NULL, errbuf);
     if (session->forwardChannel.wlanDevice == NULL)
     {
         LOG("Failed:%s\n", errbuf)
         exit(1);
+    }
+    if (pcap_compile(session->forwardChannel.wlanDevice, &fcode, filter, 1, wlanMask) >= 0)
+    {
+        int res = pcap_setfilter(session->forwardChannel.wlanDevice, &fcode);
+        if (res < 0)
+        {
+            printf("Setting filter for wlan device failed!");
+        }
     }
 }
 void create_backward_channel(SpoofSession *session)
@@ -27,7 +40,7 @@ void create_backward_channel(SpoofSession *session)
     // Here we create different channels for different threads.
     // However, according to UserBridge example, one pcap_t can be safely accessed from two threads
     // This require more investigation.
-    char errbuf[PCAP_BUF_SIZE];
+    /*char errbuf[PCAP_BUF_SIZE];
     session->backwardChannel.vEtherDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
     if (session->backwardChannel.vEtherDevice == NULL)
     {
@@ -40,7 +53,9 @@ void create_backward_channel(SpoofSession *session)
     {
         LOG("Failed:%s\n", errbuf)
         exit(1);
-    }
+    }*/
+    session->backwardChannel.vEtherDevice = session->forwardChannel.vEtherDevice;
+    session->backwardChannel.wlanDevice = session->forwardChannel.wlanDevice;
 }
 
 void handleHttp(pcap_t *device, TcpPacket *tcpPacket, uint16_t len)
@@ -71,8 +86,14 @@ void handleHttp(pcap_t *device, TcpPacket *tcpPacket, uint16_t len)
     return;
 }
 
-void forward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content)
+void forward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content)
 {
+    SpoofSession *session = (SpoofSession *)argument;
+    if (session->exitFlag)
+    {
+        pcap_breakloop(session->forwardChannel.wlanDevice);
+        return;
+    }
     pcap_t *vEtherDevice = session->forwardChannel.vEtherDevice;
     pcap_t *wlanDevice = session->forwardChannel.wlanDevice;
 
@@ -132,12 +153,12 @@ void forward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *packe
                         addr.s_addr = session->connections[sourcePort].destIp;
                         LOG("[WARN] port %d already have an active connection to %s, is tcp retransmitting?",
                             sourcePort, inet_ntoa(addr))
-                        // lock because this is abnormal behavior, we can't assume there is no port reusing here.
-                        AcquireSRWLockExclusive(&session->rwLock);
+                        //  lock because this is abnormal behavior, we can't assume there is no port reusing here.
+                        //  AcquireSRWLockExclusive(&session->rwLock);
                         session->connections[sourcePort].destIp = tcpPacket->ipv4.dst;
                         session->connections[sourcePort].state = 2;
                         session->connections[sourcePort].halfCloseSeq = 0;
-                        ReleaseSRWLockExclusive(&session->rwLock);
+                        // ReleaseSRWLockExclusive(&session->rwLock);
                     }
                     else
                     {
@@ -157,8 +178,14 @@ void forward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *packe
         free(pkt);
     }
 }
-void backward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content)
+void backward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_header, const unsigned char *packet_content)
 {
+    SpoofSession *session = (SpoofSession *)argument;
+    if (session->exitFlag)
+    {
+        pcap_breakloop(session->backwardChannel.vEtherDevice);
+        return;
+    }
     const EthernetPacket *ethPacket = NULL;
     ethPacket = (EthernetPacket *)packet_content;
 
@@ -204,9 +231,9 @@ void backward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *pack
                     TcpPacket *modified = (TcpPacket *)pkt;
                     memcpy(modified->ether.ether_shost, localMacAddr, MACADDR_LEN);
                     memcpy(modified->ether.ether_dhost, session->machineInfo.MacAddress, MACADDR_LEN);
-                    AcquireSRWLockShared(&session->rwLock);
-                    modified->ipv4.src = session->connections[destPort].destIp;
-                    ReleaseSRWLockShared(&session->rwLock);
+                    // AcquireSRWLockShared(&session->rwLock);
+                    modified->ipv4.src = session->connections[destPort].destIp == 0 ? ipAddr : session->connections[destPort].destIp;
+                    // ReleaseSRWLockShared(&session->rwLock);
                     modified->ipv4.checksum = Ipv4Checksum((Ipv4Packet *)modified);
                     modified->tcp.checksum = TcpChecksum(modified);
                     int res = pcap_sendpacket(session->backwardChannel.wlanDevice, pkt, packet_header->len);
@@ -214,16 +241,16 @@ void backward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *pack
 
                     if (tcpPacket->tcp.flags & tcp_rst)
                     {
-                        AcquireSRWLockExclusive(&session->rwLock);
+                        // AcquireSRWLockExclusive(&session->rwLock);
                         session->connections[destPort].state = 0;
                         session->connections[destPort].halfCloseSeq = 0;
                         session->connections[destPort].destIp = 0; // close connection
-                        ReleaseSRWLockExclusive(&session->rwLock);
+                        // ReleaseSRWLockExclusive(&session->rwLock);
                     }
                     else if (tcpPacket->tcp.flags & tcp_fin)
                     {
-                        AcquireSRWLockExclusive(&session->rwLock);
-                        // normally two thread wont modify the same connection object at the same time
+                        // AcquireSRWLockExclusive(&session->rwLock);
+                        //  normally two thread wont modify the same connection object at the same time
                         if (session->connections[destPort].state == 2) // connected
                         {
                             // go to half-closed
@@ -239,7 +266,7 @@ void backward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *pack
                                 session->connections[sourcePort].destIp = 0; // close connection
                             }
                         }
-                        ReleaseSRWLockExclusive(&session->rwLock);
+                        // ReleaseSRWLockExclusive(&session->rwLock);
                     }
                 }
                 else if (ipv4Packet->ipv4.src == session->machineInfo.IpAddress)
@@ -249,16 +276,16 @@ void backward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *pack
                     // as the cost of creating a read-write lock for every port is too high
                     if (tcpPacket->tcp.flags & tcp_rst)
                     {
-                        AcquireSRWLockExclusive(&session->rwLock);
+                        // AcquireSRWLockExclusive(&session->rwLock);
                         session->connections[sourcePort].state = 0;
                         session->connections[sourcePort].halfCloseSeq = 0;
                         session->connections[sourcePort].destIp = 0; // close connection
-                        ReleaseSRWLockExclusive(&session->rwLock);
+                        // ReleaseSRWLockExclusive(&session->rwLock);
                     }
                     else if (tcpPacket->tcp.flags & tcp_fin)
                     {
-                        AcquireSRWLockExclusive(&session->rwLock);
-                        // normally two thread wont modify the same connection object at the same time
+                        // AcquireSRWLockExclusive(&session->rwLock);
+                        //  normally two thread wont modify the same connection object at the same time
                         if (session->connections[sourcePort].state == 2) // connected
                         {
                             // go to half-closed
@@ -274,7 +301,7 @@ void backward_loop_handler(SpoofSession *session, const struct pcap_pkthdr *pack
                                 session->connections[sourcePort].destIp = 0; // close connection
                             }
                         }
-                        ReleaseSRWLockExclusive(&session->rwLock);
+                        // ReleaseSRWLockExclusive(&session->rwLock);
                     }
                 }
             }
@@ -288,10 +315,15 @@ unsigned long forward_thread_proc(void *arg)
     int res = 0;
     struct pcap_pkthdr *hdr;
     const u_char *pktdata;
-    while (res = pcap_next_ex(session->forwardChannel.wlanDevice, &hdr, &pktdata) >= 0 && !session->exitFlag)
+    if (pcap_loop(session->forwardChannel.wlanDevice, -1, forward_loop_handler, (u_char *)session))
+    {
+        LOG("Failed: to open forward loop\n")
+        exit(1);
+    }
+    /*while (res = pcap_next_ex(session->forwardChannel.wlanDevice, &hdr, &pktdata) >= 0 && !session->exitFlag)
     {
         forward_loop_handler(session, hdr, pktdata);
-    }
+    }*/
 }
 void run_forward_loop(SpoofSession *session)
 {
@@ -310,10 +342,15 @@ unsigned long backward_thread_proc(void *arg)
     int res = 0;
     struct pcap_pkthdr *hdr;
     const u_char *pktdata;
-    while (res = pcap_next_ex(session->backwardChannel.vEtherDevice, &hdr, &pktdata) >= 0 && !session->exitFlag)
+    if (pcap_loop(session->backwardChannel.vEtherDevice, -1, backward_loop_handler, (u_char *)session))
+    {
+        LOG("Failed: to open backward loop\n")
+        exit(1);
+    }
+    /*while (res = pcap_next_ex(session->backwardChannel.vEtherDevice, &hdr, &pktdata) >= 0 && !session->exitFlag)
     {
         backward_loop_handler(session, hdr, pktdata);
-    }
+    }*/
 }
 void run_backward_loop(SpoofSession *session)
 {
