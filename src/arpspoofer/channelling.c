@@ -15,17 +15,17 @@ void create_forward_channel(SpoofSession *session)
         exit(1);
     }
 
-    char filter[100];
-    uint8_t *mac_addr = session->machineInfo.MacAddress;
-    memset(filter, 0, sizeof filter);
-    sprintf(filter, "ether src %.2x:%.2x:%.2x:%.2x:%.2x:%.2x", mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
-    struct bpf_program fcode;
     session->forwardChannel.wlanDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS | PCAP_OPENFLAG_NOCAPTURE_LOCAL | PCAP_OPENFLAG_MAX_RESPONSIVENESS, 0, NULL, errbuf);
     if (session->forwardChannel.wlanDevice == NULL)
     {
         LOG("Failed:%s\n", errbuf)
         exit(1);
     }
+    char filter[100];
+    uint8_t *mac_addr = session->machineInfo.MacAddress;
+    memset(filter, 0, sizeof filter);
+    sprintf(filter, "ether src %.2x:%.2x:%.2x:%.2x:%.2x:%.2x", mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+    struct bpf_program fcode;
     if (pcap_compile(session->forwardChannel.wlanDevice, &fcode, filter, 1, wlanMask) >= 0)
     {
         int res = pcap_setfilter(session->forwardChannel.wlanDevice, &fcode);
@@ -139,6 +139,7 @@ void forward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_hea
                 memcpy(modified->ether.ether_shost, wslHostAddr, MACADDR_LEN);
                 memcpy(modified->ether.ether_dhost, wslAddr, MACADDR_LEN);
                 modified->ipv4.dst = ipWsl;
+                modified->tcp.dst_port = ntohs(SSLSERVER_PORT);
                 modified->ipv4.checksum = Ipv4Checksum((Ipv4Packet *)modified);
                 modified->tcp.checksum = TcpChecksum(modified);
                 int res = pcap_sendpacket(vEtherDevice, pkt, packet_header->len);
@@ -169,11 +170,24 @@ void forward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_hea
                 }
             }
         }
+        else
+        {
+            uint8_t *pkt = malloc(packet_header->len);
+            memcpy(pkt, packet_content, packet_header->len);
+            Ipv4Packet *modified = (Ipv4Packet *)pkt;
+            memcpy(modified->ether.ether_dhost, gateMacAddr, MACADDR_LEN);
+            memcpy(modified->ether.ether_shost, localMacAddr, MACADDR_LEN);
+            int res = pcap_sendpacket(wlanDevice, pkt, packet_header->len);
+            free(pkt);
+        }
     }
     else
     {
         uint8_t *pkt = malloc(packet_header->len);
         memcpy(pkt, packet_content, packet_header->len);
+        EthernetPacket *modified = (EthernetPacket *)pkt;
+        memcpy(modified->header.ether_dhost, gateMacAddr, MACADDR_LEN);
+        memcpy(modified->header.ether_shost, localMacAddr, MACADDR_LEN);
         pcap_sendpacket(wlanDevice, pkt, packet_header->len);
         free(pkt);
     }
@@ -212,7 +226,7 @@ void backward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_he
             TcpPacket *tcpPacket = (TcpPacket *)ethPacket;
             uint16_t sourcePort = ntohs(tcpPacket->tcp.src_port);
             uint16_t destPort = ntohs(tcpPacket->tcp.dst_port);
-            if (sourcePort == 443 || destPort == 443) // HTTPS
+            if (sourcePort == SSLSERVER_PORT || destPort == SSLSERVER_PORT) // HTTPS
             {
                 char tcp_fin = 1;
                 char tcp_rst = 1 << 2;
@@ -234,6 +248,7 @@ void backward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_he
                     // AcquireSRWLockShared(&session->rwLock);
                     modified->ipv4.src = session->connections[destPort].destIp == 0 ? ipAddr : session->connections[destPort].destIp;
                     // ReleaseSRWLockShared(&session->rwLock);
+                    modified->tcp.src_port = ntohs(443);
                     modified->ipv4.checksum = Ipv4Checksum((Ipv4Packet *)modified);
                     modified->tcp.checksum = TcpChecksum(modified);
                     int res = pcap_sendpacket(session->backwardChannel.wlanDevice, pkt, packet_header->len);
@@ -357,6 +372,69 @@ void run_backward_loop(SpoofSession *session)
     DWORD threadId;
     session->hBackwardThread = CreateThread(NULL, 0, backward_thread_proc, session, 0, &threadId);
     if (!session->hBackwardThread)
+    {
+        LOG("Error:Create backward thread failed!");
+        exit(1);
+    }
+}
+
+unsigned long other_thread_proc(void *arg)
+{
+    SpoofSession *session = arg;
+    char errbuf[PCAP_BUF_SIZE];
+    pcap_t *gateDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS | PCAP_OPENFLAG_NOCAPTURE_LOCAL | PCAP_OPENFLAG_MAX_RESPONSIVENESS, 0, NULL, errbuf);
+    if (gateDevice == NULL)
+    {
+        LOG("Failed:%s\n", errbuf)
+        exit(1);
+    }
+    char filter[100];
+    struct in_addr addr;
+    addr.s_addr = session->machineInfo.IpAddress;
+    uint8_t *mac_addr = gateMacAddr;
+    memset(filter, 0, sizeof filter);
+    sprintf(filter, "ether src %.2x:%.2x:%.2x:%.2x:%.2x:%.2x and ip dst host %s", mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5],
+            inet_ntoa(addr));
+    struct bpf_program fcode;
+    if (pcap_compile(gateDevice, &fcode, filter, 1, wlanMask) >= 0)
+    {
+        int res = pcap_setfilter(gateDevice, &fcode);
+        if (res < 0)
+        {
+            printf("Setting filter for wlan device failed!");
+        }
+    }
+    int res = 0;
+    struct pcap_pkthdr *hdr;
+    const u_char *pktdata;
+    while (res = pcap_next_ex(gateDevice, &hdr, &pktdata) >= 0 && !session->exitFlag)
+    {
+        if (hdr->len == 0)
+            continue;
+        EthernetPacket *ethernetPacket = (EthernetPacket *)pktdata;
+        if (ethernetPacket->header.ether_type == ntohs(0x0800))
+        {
+            Ipv4Packet *ipv4Packet = (Ipv4Packet *)ethernetPacket;
+            if (ipv4Packet->ipv4.dst == session->machineInfo.IpAddress)
+            {
+                uint8_t *pkt = malloc(hdr->len);
+                memcpy(pkt, pktdata, hdr->len);
+                EthernetPacket *modified = (EthernetPacket *)pkt;
+                memcpy(modified->header.ether_dhost, session->machineInfo.MacAddress, MACADDR_LEN);
+                memcpy(modified->header.ether_shost, localMacAddr, MACADDR_LEN);
+                pcap_sendpacket(gateDevice, pkt, hdr->len);
+                free(pkt);
+            }
+        }
+    }
+    pcap_breakloop(gateDevice);
+    pcap_close(gateDevice);
+}
+void run_other_services(SpoofSession *session)
+{
+    DWORD threadId;
+    session->hIpServiceThread = CreateThread(NULL, 0, other_thread_proc, session, 0, &threadId);
+    if (!session->hIpServiceThread)
     {
         LOG("Error:Create backward thread failed!");
         exit(1);

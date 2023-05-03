@@ -2,3 +2,5 @@
 *.xz
 *.pcap
 *.dll
+
+bin/wslip.txt

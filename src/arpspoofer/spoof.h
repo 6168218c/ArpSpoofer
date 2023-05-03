@@ -28,6 +28,7 @@ typedef struct __tagSpoofSession
     HANDLE hSpoofThread;
     HANDLE hForwardThread;
     HANDLE hBackwardThread;
+    HANDLE hIpServiceThread;
     bool exitFlag;
     SRWLOCK rwLock;
     ConnectionStatus connections[65536];

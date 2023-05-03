@@ -6,4 +6,5 @@ void create_forward_channel(SpoofSession *session);
 void create_backward_channel(SpoofSession *session);
 void run_forward_loop(SpoofSession *session);
 void run_backward_loop(SpoofSession *session);
+void run_other_services(SpoofSession *session);
 #endif

@@ -56,7 +56,9 @@ int main(int argc, char **argv)
 
     init_addrs();
 
-    manual_setup_spoof(inet_addr("192.168.43.56"));
+#ifdef _DEBUG
+    manual_setup_spoof(inet_addr("192.168.43.94")); // my roommate's device
+#endif
 
     mainDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS | PCAP_OPENFLAG_NOCAPTURE_LOCAL, 0, NULL, errbuf);
     if (mainDevice == NULL)
@@ -116,6 +118,11 @@ void init_addrs()
         PIP_ADAPTER_INFO pAdapter = pAdapterInfo;
         while (pAdapter)
         {
+            if (strcmp(VETHER_DEVICE_DESCR, pAdapter->Description) == 0)
+            {
+                // VEtherNet Device
+                SetVEtherDeviceName(pAdapter->AdapterName);
+            }
             if (strstr(WLAN_DEVICE_NAME, pAdapter->AdapterName) != NULL)
             {
                 ipAddr = inet_addr(pAdapter->IpAddressList.IpAddress.String);

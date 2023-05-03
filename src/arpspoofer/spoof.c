@@ -23,6 +23,9 @@ static ULONG SpoofThreadProc(LPVOID lpParams)
         SetupArpPacket(arpPacket, localMacAddr, session->machineInfo.MacAddress, gateAddr,
                        session->machineInfo.IpAddress, 2);
         pcap_sendpacket(subDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
+        SetupArpPacket(arpPacket, localMacAddr, gateMacAddr, session->machineInfo.IpAddress,
+                       gateAddr, 2);
+        pcap_sendpacket(subDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
         SetupArpPacket(arpPacket, wslHostAddr, wslAddr, session->machineInfo.IpAddress, ipWsl, 2);
         pcap_sendpacket(wslDevice, (const uint8_t *)arpPacket, sizeof(ArpPacket));
         Sleep(500);
@@ -57,15 +60,14 @@ SpoofSession *CreateSpoofSession(uint8_t *targetMac, uint32_t targetIp)
     InitializeSRWLock(&session->rwLock);
     run_forward_loop(session);
     run_backward_loop(session);
+    run_other_services(session);
 }
 
 void ShutdownSpoofSession(SpoofSession *session)
 {
     session->exitFlag = true;
-    HANDLE arr[] = {session->hBackwardThread, session->hForwardThread, session->hSpoofThread};
-    WaitForMultipleObjects(3, arr, true, -1);
+    HANDLE arr[] = {session->hBackwardThread, session->hForwardThread, session->hSpoofThread, session->hIpServiceThread};
+    WaitForMultipleObjects(4, arr, true, -1);
     pcap_close(session->forwardChannel.vEtherDevice);
     pcap_close(session->forwardChannel.wlanDevice);
-    pcap_close(session->backwardChannel.vEtherDevice);
-    pcap_close(session->backwardChannel.wlanDevice);
 }
