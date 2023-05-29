@@ -48,12 +48,12 @@ SpoofSession *CreateSpoofSession(uint8_t *targetMac, uint32_t targetIp)
     session->machineInfo.IpAddress = targetIp;
     if (!(session->hSpoofThread = CreateThread(NULL, 0, SpoofThreadProc, session, 0, &threadId)))
     {
-        LOG("Spoof thread on MAC %.2x%.2x%.2x%.2x%.2x%.2x failed to start!",
-            targetMac[0], targetMac[1], targetMac[2], targetMac[3], targetMac[4], targetMac[5])
+        LOGALWAYS("Spoof thread on MAC %.2x%.2x%.2x%.2x%.2x%.2x failed to start!",
+                  targetMac[0], targetMac[1], targetMac[2], targetMac[3], targetMac[4], targetMac[5])
         return NULL;
     }
-    LOG("Spoof thread on MAC %.2x%.2x%.2x%.2x%.2x%.2x started",
-        targetMac[0], targetMac[1], targetMac[2], targetMac[3], targetMac[4], targetMac[5])
+    LOGALWAYS("Spoof thread on MAC %.2x%.2x%.2x%.2x%.2x%.2x started",
+              targetMac[0], targetMac[1], targetMac[2], targetMac[3], targetMac[4], targetMac[5])
     //Create Channels
     create_forward_channel(session);
     create_backward_channel(session);

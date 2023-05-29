@@ -23,7 +23,12 @@ extern uint8_t *dumpDevice;
     printf(args);    \
     printf("\n");
 #else
-#define LOG(args...)
+#define LOG(args...) \
+    printf(args);    \
+    printf("\n");
 #endif
+#define LOGALWAYS(args...) \
+    printf(args);          \
+    printf("\n");
 
 #endif

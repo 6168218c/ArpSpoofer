@@ -57,24 +57,23 @@ int main(int argc, char **argv)
     init_addrs();
 
 #ifdef _DEBUG
-    manual_setup_spoof(inet_addr("192.168.43.94")); // my roommate's device
+
 #endif
+    manual_setup_spoof(inet_addr("192.168.43.74")); // my roommate's device
 
     mainDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS | PCAP_OPENFLAG_NOCAPTURE_LOCAL, 0, NULL, errbuf);
     if (mainDevice == NULL)
     {
-        LOG("Failed:%s\n", errbuf)
+        LOGALWAYS("Failed:%s\n", errbuf)
         exit(1);
     }
 
-    dumpDevice = pcap_dump_open(mainDevice, "dump.pcap");
-
-    LOG("Capture started");
+    LOGALWAYS("Capture started");
     signal(SIGINT, on_sig_int);
 
     if (pcap_loop(mainDevice, -1, discovery_packet_handler, NULL))
     {
-        LOG("Failed:%s\n", errbuf)
+        LOGALWAYS("Failed:%s\n", errbuf)
         exit(1);
     }
 }
@@ -96,7 +95,7 @@ void init_addrs()
     pAdapterInfo = (IP_ADAPTER_INFO *)malloc(sizeof(IP_ADAPTER_INFO));
     if (pAdapterInfo == NULL)
     {
-        LOG("Error allocating memory needed to call GetAdaptersinfo\n");
+        LOGALWAYS("Error allocating memory needed to call GetAdaptersinfo\n");
         exit(1);
     }
     // Make an initial call to GetAdaptersInfo to get
@@ -107,7 +106,7 @@ void init_addrs()
         pAdapterInfo = (IP_ADAPTER_INFO *)malloc(ulOutBufLen);
         if (pAdapterInfo == NULL)
         {
-            LOG("Error allocating memory needed to call GetAdaptersinfo\n");
+            LOGALWAYS("Error allocating memory needed to call GetAdaptersinfo\n");
             exit(1);
         }
     }
@@ -137,12 +136,12 @@ void init_addrs()
 
                 if (size != 6)
                 {
-                    LOG("Failed to obtain Mac Addresses!")
+                    LOGALWAYS("Failed to obtain Mac Addresses!")
                     exit(1);
                 }
-                LOG("Mac Addresses:\nLocal:%.2x%.2x%.2x%.2x%.2x%.2x\nGate:%.2x%.2x%.2x%.2x%.2x%.2x",
-                    localMacAddr[0], localMacAddr[1], localMacAddr[2], localMacAddr[3], localMacAddr[4], localMacAddr[5],
-                    gateMacAddr[0], gateMacAddr[1], gateMacAddr[2], gateMacAddr[3], gateMacAddr[4], gateMacAddr[5])
+                LOGALWAYS("Mac Addresses:\nLocal:%.2x%.2x%.2x%.2x%.2x%.2x\nGate:%.2x%.2x%.2x%.2x%.2x%.2x",
+                          localMacAddr[0], localMacAddr[1], localMacAddr[2], localMacAddr[3], localMacAddr[4], localMacAddr[5],
+                          gateMacAddr[0], gateMacAddr[1], gateMacAddr[2], gateMacAddr[3], gateMacAddr[4], gateMacAddr[5])
             }
             else if (strstr(VETHER_DEVICE_NAME, pAdapter->AdapterName) != NULL)
             {
@@ -157,19 +156,19 @@ void init_addrs()
 
                 if (size != 6)
                 {
-                    LOG("Failed to obtain Mac Addresses!")
+                    LOGALWAYS("Failed to obtain Mac Addresses!")
                     exit(1);
                 }
-                LOG("vEthernet Mac Addresses:\nLocal:%.2x%.2x%.2x%.2x%.2x%.2x\nWSL:%.2x%.2x%.2x%.2x%.2x%.2x",
-                    wslHostAddr[0], wslHostAddr[1], wslHostAddr[2], wslHostAddr[3], wslHostAddr[4], wslHostAddr[5],
-                    wslAddr[0], wslAddr[1], wslAddr[2], wslAddr[3], wslAddr[4], wslAddr[5])
+                LOGALWAYS("vEthernet Mac Addresses:\nLocal:%.2x%.2x%.2x%.2x%.2x%.2x\nWSL:%.2x%.2x%.2x%.2x%.2x%.2x",
+                          wslHostAddr[0], wslHostAddr[1], wslHostAddr[2], wslHostAddr[3], wslHostAddr[4], wslHostAddr[5],
+                          wslAddr[0], wslAddr[1], wslAddr[2], wslAddr[3], wslAddr[4], wslAddr[5])
             }
             pAdapter = pAdapter->Next;
         }
     }
     else
     {
-        LOG("GetAdaptersInfo failed with error: %d\n", dwRetVal);
+        LOGALWAYS("GetAdaptersInfo failed with error: %d\n", dwRetVal);
         exit(1);
     }
 
@@ -205,10 +204,10 @@ void discovery_packet_handler(u_char *argument, const struct pcap_pkthdr *packet
             }
         }
     }
-    if (memcmp(ethPacket->header.ether_shost, localMacAddr, MACADDR_LEN) == 0)
+    /*if (memcmp(ethPacket->header.ether_shost, localMacAddr, MACADDR_LEN) == 0)
     {
         pcap_dump(dumpDevice, packet_heaher, packet_content);
-    }
+    }*/
 }
 
 void manual_setup_spoof(uint32_t targetIp)
@@ -221,7 +220,7 @@ void manual_setup_spoof(uint32_t targetIp)
     {
         struct in_addr addr;
         addr.s_addr = targetIp;
-        LOG("Failed to obtain Mac Addresses for target ip %s", inet_ntoa(addr))
+        LOGALWAYS("Failed to obtain Mac Addresses for target ip %s", inet_ntoa(addr))
         return;
     }
 
