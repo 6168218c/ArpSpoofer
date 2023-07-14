@@ -19,16 +19,13 @@ extern unsigned char wslHostAddr[MACADDR_LEN], wslAddr[MACADDR_LEN];
 
 #ifdef _DEBUG
 extern uint8_t *dumpDevice;
-#define LOG(args...) \
-    printf(args);    \
+#define LOGDEBUG(args...) \
+    printf(args);         \
     printf("\n");
 #else
+#define LOGDEBUG(args...)
+#endif
 #define LOG(args...) \
     printf(args);    \
     printf("\n");
-#endif
-#define LOGALWAYS(args...) \
-    printf(args);          \
-    printf("\n");
-
 #endif

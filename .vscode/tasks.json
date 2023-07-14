@@ -9,8 +9,7 @@
                 "isDefault": true
             },
             "dependsOn": [
-                "C/C++: gcc.exe ArpSpoofer Debug",
-                "C/C++: gcc.exe FakeSSLServer Debug"
+                "C/C++: gcc.exe ArpSpoofer Debug"
             ]
         },
         {
@@ -31,32 +30,6 @@
                 "-liphlpapi",
                 "-o",
                 "${workspaceFolder}/bin/arpspoofer.exe"
-            ],
-            "options": {
-                "cwd": "${fileDirname}"
-            },
-            "problemMatcher": [
-                "$gcc"
-            ]
-        },
-        {
-            "type": "cppbuild",
-            "label": "C/C++: gcc.exe FakeSSLServer Debug",
-            "command": "C:\\Program Files\\mingw64\\bin\\gcc.exe",
-            "args": [
-                "-fdiagnostics-color=always",
-                "-g",
-                "-D_DEBUG",
-                "${workspaceFolder}/src/fakesslserver/*.c",
-                "-I",
-                "C:\\openssl\\include",
-                "-L",
-                "C:\\openssl\\lib",
-                "-llibssl",
-                "-llibcrypto",
-                "-lwsock32",
-                "-o",
-                "${workspaceFolder}/bin/fakesslserver.exe"
             ],
             "options": {
                 "cwd": "${fileDirname}"

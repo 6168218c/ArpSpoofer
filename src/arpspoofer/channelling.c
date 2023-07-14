@@ -44,14 +44,14 @@ void create_backward_channel(SpoofSession *session)
     session->backwardChannel.vEtherDevice = pcap_open(VETHER_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
     if (session->backwardChannel.vEtherDevice == NULL)
     {
-        LOG("Failed:%s\n", errbuf)
+        LOGDEBUG("Failed:%s\n", errbuf)
         exit(1);
     }
 
     session->backwardChannel.wlanDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS, 0, NULL, errbuf);
     if (session->backwardChannel.wlanDevice == NULL)
     {
-        LOG("Failed:%s\n", errbuf)
+        LOGDEBUG("Failed:%s\n", errbuf)
         exit(1);
     }*/
     session->backwardChannel.vEtherDevice = session->forwardChannel.vEtherDevice;
@@ -67,7 +67,8 @@ void handleHttp(pcap_t *device, TcpPacket *tcpPacket, uint16_t len)
     if (pos = strstr(payload, "Upgrade-Insecure-Requests"))
     {
         uint8_t *lineEnd = (uint8_t *)strstr(pos, "\r\n"); // It should always be
-        if (*(lineEnd - 1) == '1')                         // found
+        C_ASSERT(lineEnd != NULL);
+        if (*(lineEnd - 1) == '1') // found upgrade request
         {
             TcpPacket *newPacket = malloc(sizeof(TcpPacket) + len);
             memcpy(newPacket, tcpPacket, sizeof(TcpPacket));
@@ -81,7 +82,13 @@ void handleHttp(pcap_t *device, TcpPacket *tcpPacket, uint16_t len)
     }
     else
     {
-        pcap_sendpacket(device, (const uint8_t *)tcpPacket, sizeof(TcpPacket) + len);
+        uint8_t *pkt = malloc(sizeof(TcpPacket) + len);
+        memcpy(pkt, tcpPacket, sizeof(TcpPacket) + len);
+        EthernetPacket *modified = (EthernetPacket *)pkt;
+        memcpy(modified->header.ether_dhost, gateMacAddr, MACADDR_LEN);
+        memcpy(modified->header.ether_shost, localMacAddr, MACADDR_LEN);
+        pcap_sendpacket(device, (const uint8_t *)pkt, sizeof(TcpPacket) + len);
+        free(pkt);
     }
     return;
 }
@@ -127,7 +134,7 @@ void forward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_hea
                 uint16_t len = ntohs(ipv4Packet->ipv4.len) - sizeof(ipv4Packet->ipv4) - (tcpPacket->tcp.data_off_set >> 4 << 2);
                 // uint16_t checksum = TcpChecksum(tcpPacket);
                 // uint16_t ipchecksum = Ipv4Checksum(ipv4Packet);
-                // handleHttp(tcpPacket, len);
+                handleHttp(wlanDevice, tcpPacket, len);
                 return;
             }
             if (destPort == 443) // HTTPS
@@ -152,8 +159,8 @@ void forward_loop_handler(u_char *argument, const struct pcap_pkthdr *packet_hea
                     {
                         struct in_addr addr;
                         addr.s_addr = session->connections[sourcePort].destIp;
-                        LOG("[WARN] port %d already have an active connection to %s, is tcp retransmitting?",
-                            sourcePort, inet_ntoa(addr))
+                        LOGDEBUG("[WARN] port %d already have an active connection to %s, is tcp retransmitting?",
+                                 sourcePort, inet_ntoa(addr))
                         //  lock because this is abnormal behavior, we can't assume there is no port reusing here.
                         //  AcquireSRWLockExclusive(&session->rwLock);
                         session->connections[sourcePort].destIp = tcpPacket->ipv4.dst;
@@ -332,7 +339,7 @@ unsigned long forward_thread_proc(void *arg)
     const u_char *pktdata;
     if (pcap_loop(session->forwardChannel.wlanDevice, -1, forward_loop_handler, (u_char *)session))
     {
-        LOG("Failed: to open forward loop\n")
+        LOG("[ERROR] Failed to open forward loop\n")
         exit(1);
     }
     /*while (res = pcap_next_ex(session->forwardChannel.wlanDevice, &hdr, &pktdata) >= 0 && !session->exitFlag)
@@ -359,7 +366,7 @@ unsigned long backward_thread_proc(void *arg)
     const u_char *pktdata;
     if (pcap_loop(session->backwardChannel.vEtherDevice, -1, backward_loop_handler, (u_char *)session))
     {
-        LOG("Failed: to open backward loop\n")
+        LOG("[ERROR] Failed to open backward loop\n")
         exit(1);
     }
     /*while (res = pcap_next_ex(session->backwardChannel.vEtherDevice, &hdr, &pktdata) >= 0 && !session->exitFlag)
@@ -373,7 +380,7 @@ void run_backward_loop(SpoofSession *session)
     session->hBackwardThread = CreateThread(NULL, 0, backward_thread_proc, session, 0, &threadId);
     if (!session->hBackwardThread)
     {
-        LOG("Error:Create backward thread failed!");
+        LOG("[ERROR] Create backward thread failed!");
         exit(1);
     }
 }
@@ -385,7 +392,7 @@ unsigned long other_thread_proc(void *arg)
     pcap_t *gateDevice = pcap_open(WLAN_DEVICE_NAME, 65536, PCAP_OPENFLAG_PROMISCUOUS | PCAP_OPENFLAG_NOCAPTURE_LOCAL | PCAP_OPENFLAG_MAX_RESPONSIVENESS, 0, NULL, errbuf);
     if (gateDevice == NULL)
     {
-        LOG("Failed:%s\n", errbuf)
+        LOG("[ERROR] Failed:%s\n", errbuf)
         exit(1);
     }
     char filter[100];
